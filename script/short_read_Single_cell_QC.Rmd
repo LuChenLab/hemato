@@ -1,0 +1,870 @@
+---
+title: "ScientificData_Smartseq2"
+author: "zhangdan"
+date: "2020/9/15"
+output: html_document
+---
+
+```{r echo=F}
+suppressMessages(library(dplyr))
+suppressMessages(library(formattable))
+suppressMessages(library(ggplot2))
+suppressMessages(library(gridExtra))
+suppressMessages(library(grid))
+suppressMessages(library(gtable))
+suppressMessages(library(DESeq2))
+suppressMessages(library(clusterProfiler))
+library("openxlsx")
+library("plyr")
+```
+
+## STAR information
+
+```{r}
+star_df <-
+  read.table(
+    "/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/FASTQC/STAR_Multiqc/multiqc_data/multiqc_star.txt",
+    stringsAsFactors = F,
+    header = T
+  )
+star_df %>%
+  dplyr::select(Sample,
+         total_reads,
+         uniquely_mapped_percent,
+         avg_mapped_read_length) %>%
+  mutate(total_reads = round(total_reads / 1e6, 1)) -> star_df_use
+
+```
+
+## fastqc information
+
+```{r}
+fastqc <-
+  read.table(
+    '/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/FASTQC/MultiQC/multiqc_data/multiqc_fastqc.txt',
+    stringsAsFactors = F,
+    header = T,
+    sep = '\t'
+  )
+fastqc$label <- gsub('_R1|_R2', '', fastqc$Sample)
+fastqc$label <- mapvalues(from = c("LT-HSCe6-2", "ST-HSC8-6"),
+                          to = c("ST-HSC8-6", "MPP8-6"),
+                          x = fastqc$label)
+
+gc_mean <- lapply(split(fastqc$X.GC, fastqc$label), mean)
+total.seq <- lapply(split(fastqc$Total.Sequences, fastqc$label), mean)
+
+```
+
+## Q30 data
+
+```{r}
+q30 <- read.table('/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/FASTQC/Q30/summary.txt', stringsAsFactors = F)
+
+q30$label <- gsub('.Q30.R1.txt|.Q30.R2.txt', '', q30$V1)
+
+q30_mean <- lapply(split(q30$V2, q30$label), mean)
+
+```
+
+## TIN val
+
+```{r}
+tin_val <- read.table('/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/RESQC/TIN/TIN_summary.txt', stringsAsFactors = F)
+colnames(tin_val) <- c('label', 'mean', 'median', 'stdev')
+tin_val$label <-
+  sapply(strsplit(tin_val$label, split = '[.]'), '[[', 1)
+```
+
+## meta information
+```{r}
+
+meta <-
+  read.table(
+    '/mnt/raid63/HSC/mouse/singleCell/SMARTseq/SMARTseq2_HSC_MPP/meta/SMARTseq_hemo_sc.meta.tsv',
+    stringsAsFactors = F,
+    sep = '\t',
+    header = T
+  )
+
+```
+
+```{r}
+star_df_use$GC <- plyr::mapvalues(
+  from = names(gc_mean),
+  to = unname(unlist(gc_mean)),
+  x = star_df_use$Sample
+)
+
+
+star_df_use$Cell_type <- plyr::mapvalues(
+  from = meta$Run,
+  to = meta$Cell_type,
+  x = star_df_use$Sample
+)
+
+star_df_use$q30 <- plyr::mapvalues(
+  from = names(q30_mean),
+  to = unname(unlist(q30_mean)),
+  x = star_df_use$Sample
+)
+
+
+star_df_use[['cell_purity']] <- "NA"
+star_df_use[['RIN']] <- "NA"
+star_df_use[['TIN']] <- "NA"
+
+star_df_use <- merge(star_df_use, tin_val, by.x='Sample', 'label')
+colnames(star_df_use)[2] <- 'clean_reads'
+
+star_df_use$total_reads <- as.numeric(plyr::mapvalues(
+  from = names(total.seq),
+  to = unname(unlist(total.seq)) / 1e6,
+  x = star_df_use$Sample
+))
+
+star_df_use$clean_rate <-
+  star_df_use$clean_reads / star_df_use$total_reads
+star_df_use <- star_df_use[, c(1, 14, 15, 2:13)]
+colnames(star_df_use)[13:15] <-
+  paste("TIN", colnames(star_df_use)[13:15], sep = '_')
+
+star_df_use$Cell_type <- factor(star_df_use$Cell_type, levels = c("LT-HSC", "ST-HSC", "MPP"))
+
+star_df_use <- star_df_use[order(star_df_use$Cell_type),]
+saveRDS(star_df_use, file = glue::glue('/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/data_preapre/star_df_use.Rds'))
+
+write.table(
+  star_df_use,
+  sep = '\t',
+  file = glue::glue('/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/data_preapre/star_df_use.tsv'),
+  row.names = F,
+  quote = F
+)
+
+
+# p <- tableGrob(star_df_use, theme = ttheme_minimal())
+# p$heights <- unit(rep(1 / nrow(p), nrow(p)), "npc")
+# p <- gtable_add_grob(
+#   p,
+#   grobs = rectGrob(gp = gpar(fill = NA, lwd = 2)),
+#   t = 2,
+#   b = nrow(p),
+#   l = 1,
+#   r = ncol(p)
+# )
+# 
+# p <- gtable_add_grob(
+#   p,
+#   grobs = rectGrob(gp = gpar(fill = NA, lwd = 2)),
+#   t = 1,
+#   l = 1,
+#   r = ncol(p)
+# )
+
+# pdf('test.pdf', 8, 12)
+# grid.arrange(p)
+# dev.off()
+```
+# start from here
+############################################################ start from here
+## Final sample table output
+
+```{r}
+star_df_use <- readRDS('/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/data_preapre/star_df_use.Rds')
+star_df_use$total_reads <- round(star_df_use$total_reads, 1)
+star_df_use$clean_rate <- round(star_df_use$clean_rate, 3)
+```
+
+## base QC information
+
+```{r}
+library("forcats")
+Base_Median = function(mypath,pattern){
+  filenames = list.files(path = mypath, pattern = pattern, full.names = TRUE)
+  datalist = lapply(filenames,function(x){
+    tmp <- fread(x)
+    colnames(tmp)<-c("Base","Mean","Median","Lower_Quartile","Upper_Quartile","Percentile_10th","Percentile_90th")
+    tmp <-tmp[,c("Base","Mean")]
+    new_bin <- rep(c("10-29", "30-49", "50-69", "70-89", "90-109", "110-129", "130-149"), each = 4)
+    tmp$Base <- plyr::mapvalues(from = as.character(tmp$Base[10:37]),
+                                   to = new_bin,
+                                   x = tmp$Base)
+    tmp_raw <- tmp
+    tmp <- tapply(tmp$Mean, tmp$Base, mean, na.rm = T)
+    tmp <- tmp[c(tmp_raw$Base)]
+    tmp <- as.data.frame(tmp)
+    tmp$Base <- tmp_raw$Base
+    tmp <- tmp[,c(2,1)]
+    tmp <- tmp[!duplicated(tmp$Base),]
+    tmp$Base <- fct_inorder(factor(tmp$Base))  ## keep orders
+    setnames(tmp,"tmp",strsplit(tail(strsplit(x, "/")[[1]], n = 1),"[_]")[[1]][1])
+    return(tmp)
+  })
+  Reduce(function(x, y) {merge(x, y, all = T, by = "Base")}, datalist)
+}
+system.time(mtx<-Base_Median(mypath='/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/FASTQC/base',pattern='base.txt'))
+mtx<-melt(mtx)
+setDF(mtx)
+dim(mtx)
+mtx$variable2 <- sub(".R[12]", "", mtx$variable)
+colnames(mtx) <- c("Base", "pair", "Mean", "label")
+mtx <- mtx[, c(1,3,2,4)]
+mtx %>% group_by(label, Base) %>% dplyr::mutate(MeanQual = mean(Mean)) -> mtx
+mtx$Cell_type <- plyr::mapvalues(
+  from = meta$Run,
+  to = meta$Cell_type,
+  x = mtx$label
+)
+mtx$Cell_type <- factor(mtx$Cell_type, levels = c("LT-HSC", "ST-HSC", "MPP"))
+```
+
+## Figure1
+```{r, fig.width=6, fig.height=4}
+require(ggplot2)
+p1 <- ggplot(mtx, aes(
+  x = Base,
+  y = MeanQual,
+  color=Cell_type
+  # group = genotype
+)) +
+  geom_rect(xmin=0.5, xmax=40, ymin=28, ymax=41, fill='#afe6af', color=NA, alpha=0.1) +
+  # geom_rect(xmin=1, xmax=38, ymin=20, ymax=28, fill='#e6d7af', color=NA, alpha=0.1) +
+  stat_boxplot(geom = "errorbar",width=0.8)+
+  geom_boxplot(width=0.8,outlier.shape=NA)+
+  labs(x="Position (bp)", y = "Mean Sequence Quality")+
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        legend.text=element_text(size=10),
+        legend.title= element_blank(),
+        legend.position = "top",
+        axis.title = element_text(size = 20),
+        axis.text = element_text(size = 16))+
+  expand_limits(y=c(0,41))+scale_y_continuous(expand = c(0,0))
+
+# p <- p + facet_grid( ~ genotype)
+
+ggsave(
+  plot = p1,
+  filename = '/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/analysis/p1_qual_boxplot.pdf',
+  width = 6,
+  height = 4
+)
+p1
+```
+
+
+## rseqc information
+
+```{r, fig.width=6, fig.height=4}
+require(data.table)
+RSeqc_summary <- function(column=c(1,2),pattern=".UTR.txt",by="Group"){
+  filenames2 <- list.files("/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/RESQC/read_distribution/", pattern = pattern)
+  filenames2 <- paste0("/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/RESQC/read_distribution/",filenames2)
+  RSeqc_file <-lapply(filenames2,function(x){
+    tmp <- fread(x,select=column)
+    colnames(tmp)[2] <- strsplit(tail(strsplit(x, "/")[[1]], n = 1),"[.]")[[1]][1]
+    return(tmp)
+  })
+  Reduce(function(x, y) {merge(x, y, all = T, by = by)}, RSeqc_file) 
+}
+
+RSeqc_file_totalbases <- RSeqc_summary(column=c(1,2))
+RSeqc_file_Tag_count <- RSeqc_summary(column=c(1,3))
+RSeqc_file_TagsperKb <- RSeqc_summary(column=c(1,4))
+
+Tag_count <- melt(RSeqc_file_Tag_count)
+Tag_count$Cell_type <- plyr::mapvalues(
+  from = meta$Run,
+  to = meta$Cell_type,
+  x = Tag_count$variable
+)
+
+Tag_count2 <-
+  Tag_count[, .(percentage = value * 100 / sum(value)), by = variable]
+Tag_count$percentage <-Tag_count2$percentage
+df <- Tag_count[,.(mean = mean(percentage),sd=sd(percentage)),by=.(Group,Cell_type)]
+df$Cell_type <- factor(df$Cell_type, levels = c("LT-HSC", "ST-HSC", "MPP"))
+```
+## Figure3
+```{r, fig.width=6, fig.height=4}
+p3 <- ggplot(df, aes(x=Group, y=mean, color=Cell_type, fill=Cell_type)) + 
+  geom_bar(stat="identity", color="black", 
+           position=position_dodge()) +
+  geom_errorbar(aes(ymin=mean-sd, ymax=mean+sd), 
+                color='black',
+                width=.2,
+                position=position_dodge(.9))+
+  labs(y = "Frequency (%)")+
+  theme_classic() +
+  # scale_fill_manual(values=c("#00AFBB", "#E7B800"))+
+  theme(axis.title = element_text(size = 16),
+        axis.title.x=element_blank(),
+        axis.text = element_text(size = 12), 
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.text=element_text(size=10),
+        legend.title= element_blank())
+
+ggsave(
+  plot = p3,
+  filename = '/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/analysis/p3_annotation_distribution.pdf',
+  # width = 12,
+  width = 6,
+  height = 4
+)
+p3
+```
+
+## Coverage
+```{r}
+file_list <-
+  list.files("/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/RESQC/gene_body/",
+             pattern = "geneBodyCoverage.txt",
+             full.names = T)
+
+
+data <- lapply(file_list,function(x){
+  tab <- fread(x,sep = '\t', header = F)
+  tab <- tab[2,]
+})
+
+geneBodyCoverage <- do.call(rbind,data)
+geneBodyCoverage2<- apply(geneBodyCoverage[,-1],1,function(x){
+  (x - min(x)) / (max(x) - min(x))   ## txt files  (i - min(dat)) / (max(dat) - min(dat))
+})
+colnames(geneBodyCoverage2)<- do.call(rbind, strsplit(geneBodyCoverage$V1,split="[.]"))[,1]
+geneBodyCoverage2 <- cbind(geneBodyCoverage2,percent=1:100)
+geneBodyCoverage2 <- melt(geneBodyCoverage2,id.var="percent")
+# geneBodyCoverage2 <- geneBodyCoverage2[-(8001:8100),]
+geneBodyCoverage2$Var1<-rep(1:100,length(unique(geneBodyCoverage2$Var2)))
+geneBodyCoverage2 <-
+  geneBodyCoverage2[geneBodyCoverage2$Var2 != 'percent', ]
+
+geneBodyCoverage2$Var2 <- sub("^V", "", geneBodyCoverage2$Var2)
+geneBodyCoverage2$Var2 <- gsub("_", "-", geneBodyCoverage2$Var2)
+geneBodyCoverage2$Cell_type <- plyr::mapvalues(from = meta$Run,
+                                           to = meta$Cell_type,
+                                           x = geneBodyCoverage2$Var2)
+
+geneBodyCoverage2$Cell_type <- factor(geneBodyCoverage2$Cell_type, levels = c("LT-HSC", "ST-HSC", "MPP"))
+```
+
+## Figure2
+```{r, fig.width=6, fig.height=4}
+geneBodyCoverage2 <- geneBodyCoverage2[which(geneBodyCoverage2$Var2 != "LT-HSC6-22"),]#删除异常的一根
+p2 <-
+  ggplot(geneBodyCoverage2,
+         aes(
+           x = Var1,
+           y = value,
+           group = Var2,
+           colour = Cell_type
+         )) + geom_line() +
+  theme(
+    panel.background = element_blank(),
+    axis.title = element_text(size = 11),
+    axis.text = element_text(size = 10),
+    axis.line = element_line(),
+    title = element_text(
+      size = 15,
+      hjust = .5,
+      vjust = .5
+    ),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+    # legend.position = "none"
+  ) +
+  # scale_colour_manual(values = c("#00AFBB", "#E7B800")) +
+  labs(x = "Gene body percentile (5'->3')", y = "Coverage", title =
+         "Gene body coverage")
+# p <- p + facet_grid(~ Genotype)
+
+ggsave(
+  plot = p2,
+  filename = '/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/analysis/p2_genebody_cov.pdf',
+  # width = 12,
+  width = 6,
+  height = 4
+)
+p2
+```
+
+
+########################################## start from here ######################
+## Creat Seurat object
+
+```{r}
+load("/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/zhangdan/analysis/02Smartseq2/02GE_Seurat/tiss.Rdata")
+```
+
+
+```{r message=FALSE, echo=FALSE}
+library(here)
+library(GenomicRanges)
+library(gridExtra)
+library(data.table)
+library(factoextra)
+library(org.Mm.eg.db)
+library("ComplexHeatmap")
+library("Seurat",lib.loc = "/home/zhangdan/R/x86_64-pc-linux-gnu-library/4.0")
+packageVersion("Seurat")
+```
+
+
+# meta data
+```{r}
+#metadata
+metadata.hsc <- read.csv("/mnt/raid63/HSC/mouse/singleCell/SMARTseq/SMARTseq2_HSC_MPP/meta/SMARTseq_hemo_sc.meta.tsv",sep="\t")
+rownames(metadata.hsc) <- metadata.hsc$Run
+metadata.hsc <- metadata.hsc[,4:14]
+```
+
+# raw data
+```{r}
+rawdata.hsc <- read.csv("/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/zhangdan/analysis/02Smartseq2/01SCDSS/gene_count.csv",sep="\t")
+colnames(rawdata.hsc) <- gsub("\\.","-", colnames(rawdata.hsc))
+rawdata.hsc[1:55,1:5]
+```
+
+
+```{r}
+keytypes(org.Mm.eg.db)
+test <- bitr(geneID = rownames(rawdata.hsc),
+                      fromType = "ENSEMBL",
+                      toType = "SYMBOL",
+                      OrgDb = "org.Mm.eg.db")
+test_id <- grep("^Mt", test$SYMBOL)
+length(unique(test$ENSEMBL))
+test <- test[!duplicated(test$SYMBOL),]
+
+rownames(rawdata.hsc) <- mapvalues(from = test$ENSEMBL,
+                                   to = test$SYMBOL,
+                                   x = rownames(rawdata.hsc))
+
+
+
+```
+
+# QC 
+```{r}
+# Sort cells by cell name
+colnames(rawdata.hsc)[which(colnames(rawdata.hsc) == "LT-HSCe6-2")] <- "LT-HSC6-2"
+colnames(rawdata.hsc)[which(colnames(rawdata.hsc) == "ST-HSC8-6")] <- "MPP8-6"
+table(rownames(metadata.hsc) %in% colnames(rawdata.hsc))
+rawdata.hsc = rawdata.hsc[, rownames(metadata.hsc)]
+
+
+#move gene of sd=0
+rawdata.hsc <- rawdata.hsc[apply(rawdata.hsc, 1, sd) > 0, ]
+
+# Create the Seurat object with all the data
+tiss <- CreateSeuratObject(counts = rawdata.hsc, project = "hsc",min.cells = 3, min.features = 200)
+tiss <- AddMetaData(object = tiss, metadata.hsc)
+
+
+# Change default name for sums of counts from nUMI to nReads
+colnames(tiss@meta.data)[colnames(tiss@meta.data) == 'nUMI'] <- 'nReads'
+
+
+#Calculate percent mt genes.
+tiss[["Percent.mt"]] <- PercentageFeatureSet(tiss, pattern = "^Mt")
+tiss[["Percent.Ribo"]] <- PercentageFeatureSet(tiss, pattern = "^Rp[sl]")
+```
+
+# Figure5,6 violin
+```{r, fig.width=6,fig.height=4, eval = FALSE}
+tiss <- subset(tiss, subset = nFeature_RNA > 500 & nFeature_RNA < 8000)
+tiss@meta.data$Cell_type <- factor(tiss@meta.data$Cell_type, levels = c("LT-HSC", "ST-HSC", "MPP"))
+```
+
+```{r}
+tiss <- subset(tiss, subset = nFeature_RNA > 500 & nFeature_RNA < 8000)
+tiss@meta.data$Cell_type <- factor(tiss@meta.data$Cell_type, levels = c("LT-HSC", "ST-HSC", "MPP"))
+p5 <- VlnPlot(tiss, features = c("nFeature_RNA"), group.by = "Cell_type") + theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+p6 <- VlnPlot(tiss, features = c("nCount_RNA"), group.by = "Cell_type") + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+p5
+p6
+
+ggsave(p5, file = "/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/analysis/P5_nFeature_viloinplot.pdf", width = 6, height = 4)
+ggsave(p6, file = "/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/analysis/p6_nCount_viloinplot.pdf", width = 6, height = 4)
+```
+
+
+# Figure4 mito ribo
+```{r, fig.width= 6, fig.height=4}
+plot_table <- tiss@meta.data[, c(15,16)]
+plot_table <- melt(plot_table)
+plot_table$variable <- mapvalues(from = c("Percent.mt", "Percent.Ribo"),
+                                 to = c("Mitochondrial transcripts", "Ribosomal transcripts"),
+                                 x = plot_table$variable)
+
+p4 <- ggplot(data = plot_table, aes(x = value, fill = variable)) + 
+  geom_histogram() + 
+  scale_fill_manual(values = c("#FFA500","#228B22")) +
+  labs(x = "% Total Expression", y = "Number of Cells") +
+  theme_bw() + 
+  theme(panel.grid = element_blank(), 
+        panel.border = element_blank(), 
+        axis.line = element_line(),
+        legend.position = c(0.8,0.7),
+        axis.title = element_text(size = 22), 
+        axis.text = element_text(size = 16), 
+        axis.title.x = element_text(size = 22),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 12),
+        strip.text = element_text(size = 16,angle = 0))
+p4
+ggsave(p4, file = "/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/analysis/p4_mito_ribo.pdf", width = 6, height = 4)
+```
+
+
+```{r,fig.height = 5, fig.width = 5}
+#featurescatter
+FeatureScatter(tiss, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+FeatureScatter(tiss, feature1 = "nFeature_RNA", feature2 = "Percent.mt")
+```
+
+
+```{r}
+#filter
+process_tissue <- function(tiss, scale){
+  tiss <- NormalizeData(object = tiss, scale.factor = scale)
+  tiss <- FindVariableFeatures(object = tiss, do.plot = TRUE, x.high.cutoff = Inf, y.cutoff = 0.5)
+  all.genes <- rownames(tiss)
+  tiss <- ScaleData(tiss, features = all.genes)
+  tiss <- RunPCA(tiss, features = VariableFeatures(object = tiss))
+}
+tiss <- process_tissue(tiss, 1e6)
+```
+
+
+```{r}
+ElbowPlot(tiss)
+```
+
+# Cluster the cells
+
+```{r}
+tiss <- FindNeighbors(tiss, dims = 1:6)
+tiss <- FindClusters(tiss, resolution = 0.5)
+head(Idents(tiss), 5)
+
+tiss <- RunUMAP(tiss, dims = 1:6)
+DimPlot(tiss, reduction = "umap")
+DimPlot(tiss, reduction = "umap", group.by = "Cell_type") 
+#+ annotate(geom = 'segment', y = Inf, yend = Inf, color = 'black', x = -Inf, xend = Inf, size = 1)+annotate(geom = 'segment', x = Inf, xend = Inf, color = 'black', y = -Inf, yend = Inf, size = 0.5) 
+tiss@meta.data
+colnames(tiss@meta.data)[ncol(tiss@meta.data)] <- paste("GeneCluster", colnames(tiss@meta.data)[ncol(tiss@meta.data)], sep = "_")
+
+save(tiss,file = "/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/zhangdan/analysis/02Smartseq2/02GE_Seurat/tiss.Rdata")
+```
+
+# Figure7
+```{r, fig.width=6, fig.height=4}
+
+tiss<-AddMetaData(tiss,tiss@reductions$umap@cell.embeddings,col.name = colnames(tiss@reductions$umap@cell.embeddings))
+tiss@meta.data
+```
+
+
+
+```{r}
+cairo_pdf("/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/analysis/p7_umap.pdf", width = 7, height = 4)
+ggplot(tiss@meta.data ,aes(x=UMAP_1,y=UMAP_2, color = Cell_type))+
+    geom_point(aes(color=Cell_type))+
+    theme(text=element_text(size=18)) +
+    theme(panel.background = element_rect(fill='white', colour='black'), 
+                     panel.grid=element_blank(), axis.title = element_text(color='black',
+                                                     size=18),axis.ticks.length = unit(0.4,"lines"), 
+                     axis.ticks = element_line(color='black'), 
+                     axis.ticks.margin = unit(0.6,"lines"),
+                     axis.line = element_line(colour = "black"), 
+                    axis.title.x=element_text(colour='black', size=18),
+                     axis.title.y=element_text(colour='black', size=18),
+                    axis.text=element_text(colour='black',size=18),
+                     legend.title=element_blank(),
+                     legend.text=element_text(size=18),
+                    legend.key=element_blank())+
+    theme(plot.title = element_text(size=22,colour = "black",face = "bold"))  + 
+    guides(colour = guide_legend(override.aes = list(size=5))) +
+  stat_ellipse(level = 0.7)
+dev.off()
+```
+
+# find marker gene
+
+```{r}
+raw_ident <- tiss@active.ident
+new_ident <- as.factor(tiss@meta.data$Cell_type)
+new_ident <- factor(new_ident, levels = c("LT-HSC", "ST-HSC", "MPP"))
+names(new_ident) <- names(raw_ident)
+tiss@active.ident <- new_ident
+gene.markers <- FindAllMarkers(object = tiss, only.pos = TRUE, min.pct = 0.25, logfc.threshold = log(1.5), max.cells.per.ident = 100)
+gene.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_logFC)
+
+keytypes(org.Mm.eg.db)
+gene_df <- bitr(geneID = gene.markers$gene,
+                fromType = "ENSEMBL",
+                toType = c("SYMBOL", "ENTREZID"),
+                OrgDb = 'org.Mm.eg.db',
+                drop = TRUE)
+gene.markers$SYMBOL <- mapvalues(from = gene_df$ENSEMBL,
+                                 to = gene_df$SYMBOL,
+                                 x = gene.markers$gene)
+
+
+gene.markers$ENTREZID <- mapvalues(from = gene_df$ENSEMBL,
+                                 to = gene_df$ENTREZID,
+                                 x = gene.markers$gene)
+
+top20 <- gene.markers %>% group_by(cluster) %>% top_n(n = 20, wt = avg_logFC)
+DoHeatmap(tiss, features = top20$gene, slot = "scale.data", angle = 0) + NoLegend()
+
+save(gene.markers, file = "/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/zhangdan/analysis/02Smartseq2/02GE_Seurat/gene.markers.RData")
+```
+
+
+
+# complexheatmap
+```{r}
+load("/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/zhangdan/analysis/02Smartseq2/02GE_Seurat/gene.markers.RData")
+top20 <- gene.markers %>% group_by(cluster) %>% top_n(n = 20, wt = avg_logFC)
+# extract matrix
+mat <- GetAssayData(tiss, slot = "scale.data")
+gene_df <- bitr(geneID = rownames(mat),
+                fromType = "ENSEMBL",
+                toType = "SYMBOL",
+                OrgDb = 'org.Mm.eg.db',
+                drop = TRUE)
+rownames(mat) <- mapvalues(from = gene_df$ENSEMBL,
+                           to = gene_df$SYMBOL,
+                           x = rownames(mat))
+
+
+# select gene
+MPP_ref3 <- c("Stmn1","H2afy","H2afz","Cks2","Cd34","Cd48","Dntt","Pdss1","Satb1","Flt3")
+HSCs_ref1 <- c("Gata2", "Mpl", "Eng", "Tek", "Nmycl", "Evil", "Procr")
+prog_HSC_ref2 <- c("Meis1", "Egr1", "Msl2", "Cd38", "Cd34", "Prom1")
+GMP_promono_ref2 <- c("Mpo", "Elane", "Ctsg", "Azul", "Lyst", "Lyz", "Cebpd", "Mnda")
+HSC1 <- c("Ifitm3", "Mpl","Procr","Mycn","Ly6a","Mllt3")
+HSC2 <- c("Fos", "Zfp36", "Dusp1", "Rgs1","Nr4a1","Klf2","Rgs2")
+HSC3 <- c("Ybx1","Rrm1","Oaz1","Slc22a3","Cd34","Atpif1")
+HSC4 <- c("Apoe", "H3f3a", "Pf4","Itga2b","Car1")
+mark_gene <- c(HSCs_ref1,prog_HSC_ref2, HSC1, HSC2, HSC3, HSC4,MPP_ref3, GMP_promono_ref2)
+gene_features <- gene.markers[which(gene.markers$SYMBOL %in% unique(c(top20$SYMBOL, mark_gene))),]
+rowsplit_info <- gene_features[, c("SYMBOL", "cluster")]
+rowsplit_info2 <- rowsplit_info$cluster
+names(rowsplit_info2) <- rowsplit_info$SYMBOL
+tiss$Cell_type <- as.factor(tiss$Cell_type)
+tiss$Cell_type <- factor(tiss$Cell_type, levels = c("LT-HSC", "ST-HSC", "MPP"))
+cluster_info <- tiss$Cell_type
+
+mat <- as.matrix(mat[gene_features$SYMBOL, names(cluster_info)])
+rownames(mat)
+## annotation
+library("BuenColors")
+col <- jdb_color_maps[1:3]
+names(col) <- levels(cluster_info)
+
+
+top_anno <- HeatmapAnnotation(
+  cluster = anno_block(gp = gpar(fill = col), # 设置填充色
+                       labels = levels(cluster_info), 
+                       labels_gp = gpar(cex = 1, col = "white"))) # 设置字体
+
+## add gene name
+gene_pos <- which(rownames(mat) %in% mark_gene)
+mark_gene <- rownames(mat)[gene_pos]
+  
+  
+row_anno <-  rowAnnotation(mark_gene = anno_mark(at = gene_pos, 
+                                     labels = mark_gene))
+
+```
+
+# Figure8
+```{r, fig.width=6, fig.height=4}
+pdf("/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/analysis/p8_heatmap.pdf", width = 6.5, height = 4)
+Heatmap(mat,
+        cluster_rows = FALSE,
+        cluster_columns = FALSE,
+        show_column_names = FALSE,
+        show_row_names = FALSE,
+        column_split = cluster_info,
+        row_split = rowsplit_info2,
+        top_annotation = top_anno,
+        right_annotation = row_anno,
+        column_title = NULL,
+        heatmap_legend_param = list(
+          title = "scale data",
+          title_position = "leftcenter-rot"
+        ))
+dev.off()
+p8
+
+```
+
+
+
+
+```{r}
+source("/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/zhangdan/script/02Smartseq2/02GE_Seurat/mouse_Smartseq2_mouse_development.R")
+```
+
+```{r, eval = FALSE}
+violin_gene_exp <- function(gene, rpkm, conditions=conditions, colours=colours, test=TRUE){
+        exp <- as.numeric(log(rpkm[gene,]+1))
+
+        gene_exp <- data.frame(
+                cell=colnames(rpkm),
+                clusters=conditions,
+                gene=exp
+                )
+
+        if (test==TRUE){
+                my_comparison <- combn(levels(conditions), 2, simplify = F)
+                p <- ggboxplot(gene_exp, x = "clusters", y = "gene", color = "white")+
+                geom_violin(scale = "width", width=0.7, adjust = .5,aes(fill=clusters)) +
+                stat_summary(fun.y=mean, geom="point", shape=21, size=3,  stroke = 1, fill="white")+
+                geom_hline(yintercept = mean(gene_exp$gene), linetype = 2)+
+                scale_fill_manual(values=colours) +       
+                  theme_bw()+
+                  ggtitle(gene)+
+                  #expand_limits(y = c(0, max(gene_exp$gene)+1.5)) +
+                stat_compare_means(
+                  comparisons = my_comparison,
+                  method = "wilcox.test"
+                )+ # Pairwise comparison against all
+                theme(
+                        plot.title = element_text(size=18, face="bold.italic", hjust = 0.5),
+                        axis.text=element_text(size=16),
+                        # axis.title=element_text(size=16),
+                        axis.title=element_blank(),
+                        axis.text.x = element_text(size = 13),
+                        legend.text = element_text(size =16),
+                        legend.title=element_blank(),
+                        aspect.ratio=0.5,
+                        legend.position="none",
+                        panel.grid.major = element_blank(),
+                        panel.grid.minor = element_blank()
+                )
+
+        }
+        print(p)
+}
+
+```
+
+```{r, fig.width=9, fig.height=7, eval = FALSE}
+
+require(gridExtra)
+
+# 每个基因的小提琴图都有3个cluster，对它们用不同的颜色
+female_clusterPalette <- c(
+  "#560047", 
+  "#a53bad", 
+  "#eb6bac"
+)
+# 每个基因做一个小提琴图，并用for循环保存在p这个列表中
+
+data_mat <- tiss@assays$RNA@data
+gene_df <- bitr(geneID = rownames(data_mat),
+                fromType = "ENSEMBL",
+                toType = "SYMBOL",
+                OrgDb = 'org.Mm.eg.db',
+                drop = TRUE)
+rownames(data_mat) <- mapvalues(from = gene_df$ENSEMBL,
+                           to = gene_df$SYMBOL,
+                           x = rownames(data_mat))
+
+inter_gene = c("Mpl", "Mycn","Mllt3","Gata2", "Rrm1", "Flt3", "Dntt", "Satb1", "Cd48")
+
+for (genes in inter_gene) {
+ p =  violin_gene_exp(
+    gene =  genes, 
+    rpkm = data_mat, 
+    conditions = tiss@meta.data$Cell_type, 
+    colours = female_clusterPalette,
+  )
+ggsave(p, file = paste0("/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/analysis/", genes, "violin.pdf"), width = 6, height = 4)
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+# GO annotation
+```{r, eval = FALSE}
+gene.markers_GO <- gene.markers[which(nchar(gene.markers$ENTREZID) < 10), ]
+
+
+list_de_gene_clusters <- split(gene.markers_GO$ENTREZID, 
+                               gene.markers_GO$cluster)
+
+formula_res <- compareCluster(
+  list_de_gene_clusters, 
+  fun="enrichGO", 
+  OrgDb="org.Mm.eg.db",
+  ont          = "BP",
+  pAdjustMethod = "BH",
+  pvalueCutoff  = 0.05,
+  qvalueCutoff  = 0.05
+)
+
+dotplot(formula_res, showCategory=5)
+
+pdf('/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/zhangdan/analysis/02Smartseq2/02GE_Seurat/DEG_GO_each_cluster.pdf',width = 8,height = 6)
+dotplot(formula_res, showCategory=5)
+dev.off()
+
+start_time <- Sys.time()
+lineage1_ego <- simplify(
+  formula_res, 
+  cutoff=0.5, 
+  by="p.adjust", 
+  select_fun=min
+)
+end_time <- Sys.time()
+(end_time - start_time)
+
+pdf('/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/zhangdan/analysis/02Smartseq2/02GE_Seurat/DEG_GO_each_cluster_simplified.pdf',width = 8,height = 5)
+dotplot(lineage1_ego, showCategory=5)
+dev.off()
+
+
+write.csv(formula_res@compareClusterResult, 
+          file="/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/zhangdan/analysis/02Smartseq2/02GE_Seurat/DEG_GO_each_cluster.csv")
+# 简化版本
+write.csv(lineage1_ego@compareClusterResult, 
+          file="/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/zhangdan/analysis/02Smartseq2/02GE_Seurat/DEG_GO_each_cluster_simplified.csv")
+```
+
+
+
+```{r, fig.width=18, fig.height=15, eval = FALSE}
+p_Bulk <- ggarrange(p1,p2,p3,p4,p5,p6,p7,p8, ncol = 3, nrow = 3, width = c(6,6,6), heights = c(5,5,5))
+
+pdf(p_Bulk, file = "/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/analysis/p_Bulk.pdf", width = 18, height = 15)
+p_Bulk
+dev.off()
+```
+
+
+
+```{r, fig.width=18, fig.height=15}
+p7 <- NULL
+p_Bulk <- ggarrange(p1,p3,p2,p5,p4_1,p4_2,p6,p7,p8, ncol = 3, nrow = 3, width = c(6,6,6), heights = c(5,5,5))
+
+pdf(p_Bulk, file = "/mnt/data3/zhangdan/HSC_scientific_data/Smartseq2/01QC/analysis/p_Bulk.pdf", width = 18, height = 15)
+p_Bulk
+dev.off()
+```
+

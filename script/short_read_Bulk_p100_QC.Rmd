@@ -1,0 +1,692 @@
+---
+title: "ScientificData_BULK_p100 W8"
+author: "zhangdan"
+date: "2021/2/3"
+output: html_document
+---
+
+```{r}
+knitr::opts_knit$set(root.dir = "/mnt/data3/zhangdan/HSC_scientific_data/cache")
+```
+
+
+```{r echo=F}
+suppressMessages(library(dplyr))
+suppressMessages(library(formattable))
+suppressMessages(library(ggplot2))
+suppressMessages(library(gridExtra))
+suppressMessages(library(grid))
+suppressMessages(library(gtable))
+suppressMessages(library(DESeq2))
+suppressMessages(library(clusterProfiler))
+suppressMessages(library(openxlsx))
+suppressMessages(library(data.table))
+suppressMessages(library(forcats))
+```
+
+## STAR information
+
+```{r}
+star_df <-
+  read.table(
+    "/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/FASTQC/STAR_Multiqc/multiqc_data/multiqc_star.txt",
+    stringsAsFactors = F,
+    header = T
+  )
+star_df %>%
+  dplyr::select(Sample,
+         total_reads,
+         uniquely_mapped_percent,
+         avg_mapped_read_length) %>%
+  mutate(total_reads = round(total_reads / 1e6, 5)) -> star_df_use
+
+star_df_use
+```
+
+## fastqc information
+
+```{r}
+fastqc <-
+  read.table(
+    '/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/FASTQC/MultiQC/multiqc_data/multiqc_fastqc.txt',
+    stringsAsFactors = F,
+    header = T,
+    sep = '\t'
+  )
+fastqc$label <- gsub('_R1|_R2', '', fastqc$Sample)
+
+gc_mean <- lapply(split(fastqc$X.GC, fastqc$label), mean)
+total.seq <- lapply(split(fastqc$Total.Sequences, fastqc$label), mean)
+
+```
+
+## Q30 data
+
+```{r}
+q30 <- read.table('/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/FASTQC/Q30/summary.txt', stringsAsFactors = F)
+
+q30$label <- gsub('.Q30.R1.txt|.Q30.R2.txt', '', q30$V1)
+
+q30_mean <- lapply(split(q30$V2, q30$label), mean)
+
+```
+
+## TIN val
+
+```{r}
+tin_val <- read.table('/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/RSEQC/TIN/TIN_summary.txt', stringsAsFactors = F)
+colnames(tin_val) <- c('label', 'mean', 'median', 'stdev')
+tin_val$label <-
+  sapply(strsplit(tin_val$label, split = '[.]'), '[[', 1)
+
+```
+
+## meta information
+```{r}
+
+meta <-
+  read.table(
+    '/mnt/raid63/HSC/mouse/bulk/SMARTseq2_HSC_MPP/meta/SMARTseq2_hemo.meta.tsv',
+    stringsAsFactors = F,
+    sep = '\t',
+    header = T
+  )
+
+#meta$Stage <- factor(meta$Stage, levels = c("E14", "P7", "W8"))
+#meta$Cell_type <- factor(meta$Cell_type, levels = c("LT-HSC", "ST-HSC", "MPP"))
+#meta <- meta[order(meta$Cell_type, meta$Stage),]
+#write.xlsx(meta, file = "/mnt/data3/zhangdan/HSC_scientific_data/final/Bulk_p100/meta.xlsx")
+```
+
+```{r}
+star_df_use$GC <- plyr::mapvalues(
+  from = names(gc_mean),
+  to = unname(unlist(gc_mean)),
+  x = star_df_use$Sample
+)
+
+
+star_df_use$stage <- plyr::mapvalues(
+  from = meta$Run,
+  to = meta$Stage,
+  x = star_df_use$Sample
+)
+
+star_df_use$Cell_type <- plyr::mapvalues(
+  from = meta$Run,
+  to = meta$Cell_type,
+  x = star_df_use$Sample
+)
+
+star_df_use$q30 <- plyr::mapvalues(
+  from = names(q30_mean),
+  to = unname(unlist(q30_mean)),
+  x = star_df_use$Sample
+)
+
+star_df_use$name <- plyr::mapvalues(
+  from = meta$Run,
+  to = meta$SampleLabel,
+  x = star_df_use$Sample
+)
+star_df_use[['cell_purity']] <- "NA"
+star_df_use[['RIN']] <- "NA"
+star_df_use[['TIN']] <- "NA"
+
+star_df_use <- merge(star_df_use, tin_val, by.x='Sample', 'label')
+colnames(star_df_use)[2] <- 'clean_reads'
+
+star_df_use$total_reads <- as.numeric(plyr::mapvalues(
+  from = names(total.seq),
+  to = unname(unlist(total.seq)) / 1e6,
+  x = star_df_use$Sample
+))
+
+star_df_use$clean_rate <-
+  star_df_use$clean_reads / star_df_use$total_reads
+star_df_use[, c(2,16,17)]
+
+star_df_use <- star_df_use[, c(1, 16, 17, 2:15)]
+colnames(star_df_use)[15:17] <-
+  paste("TIN", colnames(star_df_use)[15:17], sep = '_')
+
+star_df_use$Cell_type <- factor(star_df_use$Cell_type, levels = c("LT-HSC", "ST-HSC", "MPP"))
+star_df_use$Stage <- factor(star_df_use$stage, levels = c("E14", "P7","W8"))
+star_df_use <- star_df_use[order(star_df_use$Cell_type, star_df_use$Stage),]
+
+#reserved_sample <- setdiff(star_df_use$name, c("E14_ST-HSC_6",
+"E14_MPP_6", 
+"E14_LT-HSC_6", 
+"P7_MPP_6",
+"P7_ST-HSC_6", 
+"P7_LT-HSC_6", 
+"P7_LT-HSC_2",
+"W8_ST-HSC_1")
+)
+star_df_use <- star_df_use[star_df_use$name %in% reserved_sample, ]
+
+saveRDS(star_df_use, file = glue::glue('/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/data_preapre/star_df_use.Rds'))
+
+write.table(
+  star_df_use,
+  sep = '\t',
+  file = glue::glue('/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/data_preapre/star_df_use.tsv'),
+  row.names = F,
+  quote = F
+)
+
+
+# p <- tableGrob(star_df_use, theme = ttheme_minimal())
+# p$heights <- unit(rep(1 / nrow(p), nrow(p)), "npc")
+# p <- gtable_add_grob(
+#   p,
+#   grobs = rectGrob(gp = gpar(fill = NA, lwd = 2)),
+#   t = 2,
+#   b = nrow(p),
+#   l = 1,
+#   r = ncol(p)
+# )
+# 
+# p <- gtable_add_grob(
+#   p,
+#   grobs = rectGrob(gp = gpar(fill = NA, lwd = 2)),
+#   t = 1,
+#   l = 1,
+#   r = ncol(p)
+# )
+
+# pdf('test.pdf', 8, 12)
+# grid.arrange(p)
+# dev.off()
+```
+
+### Final sample table output
+
+```{r}
+star_df_use <- readRDS('/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/data_preapre/star_df_use.Rds')
+star_df_use$total_reads <- round(star_df_use$total_reads, 1)
+star_df_use$clean_rate <- round(star_df_use$clean_rate, 3)
+star_df_use <- star_df_use[star_df_use$Stage == "W8",]
+write.xlsx(star_df_use, file = "/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/analysis/W8/bulk_p100_meta.xlsx")
+```
+
+## base QC information
+
+```{r}
+Base_Median = function(mypath,pattern){
+  filenames = list.files(path = mypath, pattern = pattern, full.names = TRUE)
+  datalist = lapply(filenames,function(x){
+    tmp <- fread(x)
+    colnames(tmp)<-c("Base","Mean","Median","Lower_Quartile","Upper_Quartile","Percentile_10th","Percentile_90th")
+    tmp <-tmp[,c("Base","Mean")]
+    new_bin <- rep(c("10-29", "30-49", "50-69", "70-89", "90-109", "110-129", "130-149"), each = 4)
+    tmp$Base <- plyr::mapvalues(from = as.character(tmp$Base[10:37]),
+                                   to = new_bin,
+                                   x = tmp$Base)
+    tmp_raw <- tmp
+    tmp <- tapply(tmp$Mean, tmp$Base, mean, na.rm = T)
+    tmp <- tmp[c(tmp_raw$Base)]
+    tmp <- as.data.frame(tmp)
+    tmp$Base <- tmp_raw$Base
+    tmp <- tmp[,c(2,1)]
+    tmp <- tmp[!duplicated(tmp$Base),]
+    tmp$Base <- fct_inorder(factor(tmp$Base))  ## keep orders
+    setnames(tmp,"tmp",strsplit(tail(strsplit(x, "/")[[1]], n = 1),"[_]")[[1]][1])
+    return(tmp)
+  })
+  Reduce(function(x, y) {merge(x, y, all = T, by = "Base")}, datalist)
+}
+system.time(mtx<-Base_Median(mypath='/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/FASTQC/base',pattern='base.txt'))
+mtx <- mtx[order(mtx$Base),]
+
+mtx<-melt(mtx)
+setDF(mtx)
+dim(mtx)
+mtx$variable2 <- sub(".R[12]", "", mtx$variable)
+colnames(mtx) <- c("Base", "pair", "Mean", "label")
+mtx <- mtx[, c(1,3,2,4)]
+mtx %>% group_by(label, Base) %>% dplyr::mutate(MeanQual = mean(Mean)) -> mtx
+mtx$stage <- plyr::mapvalues(from = meta$Run,
+                             to = meta$Stage,
+                             x = mtx$label)
+mtx$Cell_type <- plyr::mapvalues(
+  from = meta$Run,
+  to = meta$Cell_type,
+  x = mtx$label
+)
+mtx$stage <- factor(mtx$stage,
+                    levels = c("E14", "P7", "W8"))
+mtx$Cell_type <- factor(mtx$Cell_type,
+                    levels = c("LT-HSC", "MPP", "ST-HSC"))
+require(ggplot2)
+mtx <- mtx[mtx$stage == "W8",]
+mtx$stage <- as.character(mtx$stage)
+mtx$Cell_type <- factor(mtx$Cell_type, levels = c("LT-HSC", "ST-HSC", "MPP"))
+```
+
+```{r, fig.width=6, fig.height=4}
+p1 <- ggplot(mtx, aes(
+  x = Base,
+  y = MeanQual,
+  color=Cell_type
+  # group = genotype
+)) +
+  geom_rect(xmin=0.5, xmax=40, ymin=28, ymax=41, fill='#afe6af', color=NA, alpha=0.1) +
+  # geom_rect(xmin=1, xmax=38, ymin=20, ymax=28, fill='#e6d7af', color=NA, alpha=0.1) +
+  stat_boxplot(geom = "errorbar",width=0.8)+
+  geom_boxplot(width=0.8,outlier.shape=NA)+
+  labs(x="Position (bp)", y = "Mean Sequence Quality")+
+  theme_classic() + 
+  # scale_color_manual(values=c("#00AFBB", "#E7B800"))+
+  #scale_y_continuous(breaks=c(0,10,20,30,40),labels=c("0","10","20","30","40"))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        legend.text=element_text(size=12),
+        legend.title= element_blank(),
+        panel.grid = element_blank(), 
+        panel.border = element_blank(), 
+        axis.line = element_line(),
+        axis.title = element_text(size = 18), 
+        axis.text = element_text(size = 14),
+        legend.position = "top")+
+  expand_limits(y=c(0,41))+scale_y_continuous(expand = c(0,0))
+
+
+# p <- p + facet_grid( ~ genotype)
+
+ggsave(
+  plot = p1,
+  filename = '/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/analysis/W8/p1_qual_boxplot.pdf',
+  width = 6,
+  height = 4
+)
+p1 
+```
+
+
+## rseqc information
+
+```{r, fig.width=6, fig.height=4}
+require(data.table)
+RSeqc_summary <- function(column=c(1,2),pattern=".UTR.txt",by="Group"){
+  filenames2 <- list.files("/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/RSEQC/read_distribution/", pattern = pattern)
+  #discard_gene <- c("E14_ST-HSC_6","E14_MPP_6", "E14_LT-HSC_6", "P7_MPP_6","P7_ST-HSC_6", "P7_LT-HSC_6", #"P7_LT-HSC_2","W8_ST-HSC_1")
+  #filenames2 <- setdiff(filenames2, paste0(meta[which(meta$SampleLabel %in% discard_gene), "Run"], ".UTR.txt"))
+  filenames2 <- paste0("/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/RSEQC/read_distribution/",filenames2)
+  
+  RSeqc_file <-lapply(filenames2,function(x){
+    tmp <- fread(x,select=column)
+    colnames(tmp)[2] <- strsplit(tail(strsplit(x, "/")[[1]], n = 1),"[.]")[[1]][1]
+    return(tmp)
+  })
+  Reduce(function(x, y) {merge(x, y, all = T, by = by)}, RSeqc_file) 
+}
+
+RSeqc_file_totalbases <- RSeqc_summary(column=c(1,2))
+RSeqc_file_Tag_count <- RSeqc_summary(column=c(1,3))
+RSeqc_file_TagsperKb <- RSeqc_summary(column=c(1,4))
+
+Tag_count <- melt(RSeqc_file_Tag_count)
+Tag_count$stage <- plyr::mapvalues(
+  from = meta$Run,
+  to = meta$Stage,
+  x = Tag_count$variable
+)
+Tag_count$Cell_type <- plyr::mapvalues(
+  from = meta$Run,
+  to = meta$Cell_type,
+  x = Tag_count$variable
+)
+
+Tag_count <- as.data.table(Tag_count)
+Tag_count2 <-
+  Tag_count[, .(percentage = value * 100 / sum(value)), by = variable]
+Tag_count$percentage <-Tag_count2$percentage
+Tag_count <- Tag_count[Tag_count$stage == "W8",]
+# Tag_count$Library <-rep(rep(c("polyARNA","totalRNA"),each=6),40)
+df <- Tag_count[,.(mean = mean(percentage),sd=sd(percentage)),by=.(Group,Cell_type)]
+df$Cell_type <- factor(df$Cell_type, levels = c("LT-HSC", "ST-HSC", "MPP"))
+
+p3 <- ggplot(df, aes(x=Group, y=mean, fill=Cell_type)) + 
+  geom_col(stat="identity", position=position_dodge()) +
+  geom_errorbar(aes(ymin=mean-sd, ymax=mean+sd), 
+                color='black',
+                width=.2,
+                position=position_dodge(.9))+
+  labs(y = "Frequency (%)")+
+  theme_classic() +
+  # scale_fill_manual(values=c("#00AFBB", "#E7B800"))+
+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        legend.text=element_text(size=12),
+        legend.title= element_blank(),
+        panel.grid = element_blank(), 
+        panel.border = element_blank(), 
+        axis.line = element_line(),
+        axis.title = element_text(size = 18), 
+        axis.text = element_text(size = 14),
+       legend.position = c(0.9,0.7))
+
+# p <- p + facet_grid(~ genotype)
+p3
+```
+
+
+```{r}
+ggsave(
+  plot = p3,
+  filename = '/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/analysis/W8/p3_annotation_distribution.pdf',
+  width = 6,
+  height = 4
+)
+```
+
+```{r}
+file_list <-
+  list.files("/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/RSEQC/gene_body",
+             pattern = "geneBodyCoverage.txt",
+             full.names = T)
+
+ #discard_gene <- c("E14_ST-HSC_6","E14_MPP_6", "E14_LT-HSC_6", "P7_MPP_6","P7_ST-HSC_6", "P7_LT-HSC_6", #"P7_LT-HSC_2","W8_ST-HSC_1")
+
+
+#file_list <- setdiff(file_list, paste0("/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/RSEQC/gene_body/", #meta[which(meta$SampleLabel %in% discard_gene), "Run"], ".geneBodyCoverage.txt"))
+  
+data <- lapply(file_list,function(x){
+  tab <- fread(x,sep = '\t', header = F)
+  tab <- tab[2,]
+})
+
+geneBodyCoverage <- do.call(rbind,data)
+geneBodyCoverage2<- apply(geneBodyCoverage[,-1],1,function(x){
+  (x - min(x)) / (max(x) - min(x))   ## txt files  (i - min(dat)) / (max(dat) - min(dat))
+})
+colnames(geneBodyCoverage2)<- do.call(rbind, strsplit(geneBodyCoverage$V1,split="[.]"))[,1]
+geneBodyCoverage2 <- cbind(geneBodyCoverage2,percent=1:100)
+geneBodyCoverage2 <- melt(geneBodyCoverage2,id.var="percent")
+# geneBodyCoverage2 <- geneBodyCoverage2[-(8001:8100),]
+geneBodyCoverage2$Var1<-rep(1:100,length(unique(geneBodyCoverage2$Var2)))
+geneBodyCoverage2 <-
+  geneBodyCoverage2[geneBodyCoverage2$Var2 != 'percent', ]
+
+geneBodyCoverage2$Var2 <- sub("^V", "", geneBodyCoverage2$Var2)
+geneBodyCoverage2$Var2 <- gsub("_", "-", geneBodyCoverage2$Var2)
+geneBodyCoverage2$Stage <- plyr::mapvalues(from = meta$Run,
+                                           to = meta$Stage,
+                                           x = geneBodyCoverage2$Var2)
+
+geneBodyCoverage2$Cell_type <-
+  plyr::mapvalues(
+    from = meta$Run,
+    to = meta$Cell_type,
+    x = geneBodyCoverage2$Var2
+  )
+geneBodyCoverage2 <- geneBodyCoverage2[geneBodyCoverage2$Stage == "W8", ]
+
+geneBodyCoverage2$Cell_type <- factor(geneBodyCoverage2$Cell_type, levels = c("LT-HSC", "ST-HSC", "MPP"))
+p2 <-
+  ggplot(geneBodyCoverage2,aes(x = Var1,y = value,group = Var2,colour = Cell_type)) + 
+  geom_line() +
+  theme(
+    panel.background = element_blank(),
+    axis.line = element_line(),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.text=element_text(size=12),
+    legend.title= element_blank(),
+    panel.grid = element_blank(), 
+    panel.border = element_blank(), 
+    axis.title = element_text(size = 18), 
+    axis.text = element_text(size = 14),
+    legend.position = c(0.9,0.2)
+  ) +
+  labs(x = "Gene body percentile (5'->3')", y = "Coverage") 
+ggsave(
+  plot = p2,
+  filename = '/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/analysis/W8/p2_genebody_cov.pdf',
+  width = 6,
+  height = 4
+)
+
+p2
+```
+
+
+## expression quality analysis
+
+```{r}
+require(DESeq2)
+preparedds <- function(obj, rowSum = 0) {
+  # filter rowSum
+  obj <- obj[rowSums(assay(obj)) > rowSum, ]
+  dds <- DESeqDataSet(obj, design = ~ Stage)
+  dds <- estimateSizeFactors(dds)
+  dds <- DESeq(dds)
+  return(dds)
+}
+
+if (isFALSE(file.exists('/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/02DEG/W8/DESeq_data_intact.RData'))) {
+  dat <-
+    readRDS(
+      '/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/data_preapre/Bulk_p100_se.Rds'
+    )
+#discard_gene <- c("E14_ST-HSC_6","E14_MPP_6", "E14_LT-HSC_6", "P7_MPP_6","P7_ST-HSC_6", "P7_LT-HSC_6", #"P7_LT-HSC_2","W8_ST-HSC_1")
+
+  #dat <- dat[,dat$SampleLabel %in% reserved_sample]
+  dat$Stage <- as.factor(dat$Stage)
+  dat <- preparedds(dat)
+  
+  vsd <- vst(dat, blind = FALSE)
+  rld <- rlog(dat, blind = FALSE)
+  colData(dat)$Stage <- factor(colData(dat)$Stage,
+                               levels = c("E14", "P7", "W8"))
+  dat <- dat[, order(colData(dat)$Stage)]
+  
+  
+  colData(rld)$Stage <- factor(colData(rld)$Stage,
+                               levels = c("E14", "P7", "W8"))
+  rld <- rld[, order(colData(rld)$Stage)]
+  
+  
+  colData(vsd)$Stage <- factor(colData(vsd)$Stage,
+                               levels = c("E14", "P7", "W8"))
+  vsd <- vsd[, order(colData(vsd)$Stage)]
+
+  save(dat, vsd, rld, file = '/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/02DEG/W8/DESeq_data_intact.RData')
+} else {
+  load('/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/02DEG/W8/DESeq_data_intact.RData')
+}
+```
+
+
+### cook's distance
+
+```{r, fig.height=3, fig.width=5}
+dat = dat[, dat$Stage == "W8"]
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  colors <- hcl(h = hues, l = 65, c = 100)[1:n]
+  colors
+}
+
+cooks_dat <- log10(assays(dat)[["cooks"]])
+
+
+pos_1 <- table(colData(dat)[colnames(cooks_dat), 'Cell_type'])
+
+offset <- c(0, cumsum(pos_1)[-length(pos_1)]) + c(0:(length(pos_1) - 1))
+
+x_ind <- unlist(lapply(1:length(pos_1), function(x) {
+  1:pos_1[x] + offset[x]
+}))
+
+
+col <- gg_color_hue(length(pos_1))
+col <- rep(col, pos_1)
+
+colnames(cooks_dat) <- sub("W8_", "", colnames(cooks_dat))
+cooks_dat <- cooks_dat[, c("LT-HSC_1","LT-HSC_2", "LT-HSC_3","LT-HSC_4","LT-HSC_5", "ST-HSC_1","ST-HSC_2", "ST-HSC_3", "ST-HSC_4", "ST-HSC_5" ,"MPP_1","MPP_2","MPP_3","MPP_4","MPP_5")]
+pdf(file = "/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/analysis/W8/p4_cooks_dis_box.pdf", width = 6, height = 4)
+boxplot(
+  cooks_dat,
+  at = x_ind,
+  range = 0,
+  col = col,
+  las = 2,
+  frame = F,
+  ylab = "Cook's distance"
+)
+dev.off()
+
+cooks_data2 <- melt(cooks_dat)
+#cooks_data2$Stage <- as.data.frame(matrix(unlist(strsplit(as.character(cooks_data2$Var2), "_")), byrow = TRUE, ncol = 3))$V2
+cooks_data2$Cell_type <- as.data.frame(matrix(unlist(strsplit(as.character(cooks_data2$Var2), "_")), byrow = TRUE, ncol = 2))$V1
+```
+
+
+### PCA
+
+```{r}
+PCAplot <- function(obj, color, shape, label, top_n = 500) {
+  # calculating Vars and select top
+  require("factoextra")
+  require("FactoMineR")
+
+  if (!is.null(top_n)) {
+    rv <- rowVars(assay(obj))
+    select <-
+      order(rv, decreasing = TRUE)[seq_len(min(top_n, length(rv)))]
+    
+    # PCA
+    res.pca_topn <- PCA(t(assay(obj)[select, ]),  graph = F)
+  } else{
+    top_n <- "ALL"
+    res.pca_topn <- PCA(t(assay(obj)),  graph = F)
+  }
+  
+  sampleinfo <- as.data.frame(colData(obj))
+  ind <- get_pca_ind(res.pca_topn)
+  pc1 <- ind$coord
+  df_topn <- merge(pc1, sampleinfo, by = 'row.names')
+  
+  p <-
+    ggplot(df_topn, aes_string(x = 'Dim.1', y = 'Dim.2', color = color, size = 5)) +
+    geom_point(aes_string(shape = shape)) +
+    ggtitle(glue::glue("{top_n} genes")) +
+    xlab(paste0("PC1", ":", round(res.pca_topn$eig[1, 2], 2), "%")) +
+    ylab(paste0("PC2", ":", round(res.pca_topn$eig[2, 2], 2), "%")) 
+  return(p)
+}
+rld <- rld[, rld$Stage == "W8"]
+rld$Cell_type <- factor(rld$Cell_type, levels = c("LT-HSC", "ST-HSC", "MPP"))
+
+p5 <- PCAplot(rld,
+              "Cell_type",
+              "Stage",
+              "SampleLabel",
+              top_n = 500)
+p5 <- p5+ guides(size = FALSE, 
+                 color = guide_legend(override.aes = list(size=3)), 
+                 shape = guide_legend(override.aes = list(size=3))) +
+  labs(title = "") +
+  guides(shape = FALSE, color = FALSE)  + 
+  theme(
+    panel.background = element_blank(),
+    axis.line = element_line(),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.text=element_text(size=12),
+    legend.title= element_blank(),
+    panel.grid = element_blank(), 
+    panel.border = element_blank(), 
+    axis.title = element_text(size = 18), 
+    axis.text = element_text(size = 14),
+    legend.position = c(0.9,0.2)
+  )
+
+
+pdf('/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/analysis/W8/p5_pca_plot_beforecombat.pdf', 6, 4)
+p5
+dev.off()
+```
+
+```{r, fig.width=5, fig.height=5}
+p5
+```
+
+# remove batch
+```{r, fig.width=5.5, fig.height=4}
+library(sva)
+edata <- assay(rld)
+class(edata)
+pheno = as.data.frame(colData(rld))
+mod = model.matrix(~as.factor(Cell_type), data=pheno)
+combat_edata <- ComBat(dat = edata, batch = pheno$Batch, mod = mod)
+head(combat_edata)
+rwa_rld <- rld
+assay(rld) <- combat_edata
+
+rld$Cell_type <- factor(rld$Cell_type, levels = c("LT-HSC", "ST-HSC", "MPP"))
+p6 <- PCAplot(rld,
+              "Cell_type",
+              "Stage",
+              "SampleLabel",
+              top_n = 500)
+p6 <- p6 +
+    guides(size = FALSE, color = guide_legend(override.aes = list(size=3)), shape = guide_legend(override.aes =   list(size=3))) +
+  labs(title = "") + guides(shape = FALSE) +
+  theme(
+    panel.background = element_blank(),
+    axis.line = element_line(),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.text=element_text(size=12),
+    legend.title= element_blank(),
+    panel.grid = element_blank(), 
+    panel.border = element_blank(), 
+    axis.title = element_text(size = 18), 
+    axis.text = element_text(size = 14),
+    legend.position = c(0.9,0.2)
+  ) + stat_ellipse(level = 0.95)
+  
+  
+  
+pdf('/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/analysis/W8/p6_pca_plot.pdf', 6, 4)
+p6
+dev.off()
+
+p6
+```
+
+
+```{r, fig.width=10, fig.height=10.5}
+library("ggpubr")
+p1+p2+p3 
+p4 <- NULL
+p_Bulk <- ggarrange(p1,p3,p4,p2,p5,p6, ncol = 2, nrow = 3, width = c(5,5), heights = c(3,3,3))
+pdf(p_Bulk, file = "/mnt/data3/zhangdan/HSC_scientific_data/Bulk_p100/01QC/analysis/W8/p_Bulk.pdf", width = 10, height = 10.5)
+p_Bulk
+dev.off()
+?ggarrange
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
