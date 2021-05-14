@@ -1,0 +1,110 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/xumengying/analysis/00.QC/01.NanoComp/")
+```
+
+# 1. sample meta
+```{r}
+options(digits=3)
+w8_meta <- openxlsx::read.xlsx("./w8_meta.xlsx")
+w8_meta$Cell_type <- factor(w8_meta$Cell_type ,levels = c("LT-HSC", "ST-HSC", "MPP"))
+```
+
+
+## 3.2 reads number pacbio
+
+# 4 NanoComp-data
+
+```{r  fig.width=6, fig.height=3}
+library(data.table)
+nano1 <- fread("/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/xumengying/analysis/00.QC/01.NanoComp/nanopore_seqkit/NanoComp-data.tsv")
+nano1$dataset <- gsub("_uniq.fastq" ,"" ,nano1$dataset)
+
+pacbio1 <- fread("/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/xumengying/analysis/00.QC/01.NanoComp/pacbio_seqkit/NanoComp-data.tsv")
+pacbio1$dataset <- gsub(".ccs.fastq.gz", "", pacbio1$dataset)
+
+np_w8 <- rbind(nano1, pacbio1)
+np_w8 <-  np_w8[np_w8$dataset %in% w8_meta$Run,]
+
+np_w8 <- merge(np_w8, w8_meta[c(2,3,5)], by.x = "dataset", by.y = "Run", all.x = T)
+np_w8$V5 <- factor(np_w8$V5, levels =  c("LT-HSC", "ST-HSC", "MPP"))
+colnames(np_w8)[c(5,6)] <- c("type", "method")
+np_w8_fil <- np_w8[np_w8$lengths > 200 & np_w8$lengths < 150000, ]
+```
+
+#log2 length
+```{r  fig.width=5, fig.height=3}
+p1 <- ggplot(np_w8_fil, aes(x = dataset, y = log10(lengths), fill = type)) +
+  geom_boxplot(outlier.shape  = NULL, width = 0.7, outlier.size = 0)+
+#  stat_boxplot(geom = "errorbar")+
+  facet_wrap(~method, scales = "free")+
+  labs(x = "Sample", y = "Reads Length")+
+  theme_bw() + 
+  theme_classic() +
+ # scale_fill_manual(values=c1)+
+  theme(axis.title = element_text(size = 14,family = "Arial"),
+        axis.title.x=element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.text=element_text(size=10),
+        legend.title= element_blank(),
+        legend.position = "top",
+        axis.text = element_text(size = 10, family = "Arial"))
+p1
+```
+#quality
+```{r  fig.width=5, fig.height=3}
+p2 <- ggplot(np_w8_fil, aes(x = dataset, y = quals, fill = type)) +
+  geom_violin(width = 0.7)+
+ # geom_boxplot(width=0.1,position = position_identity(),fill="white") +
+  stat_summary(fun.y="mean",geom="point",shape=23, size=2,fill="white") +
+  facet_wrap(~method, scales = "free")+
+  labs(x = "Sample", y = "Reads Quality")+
+  theme_bw() + 
+  theme_classic() +
+ # scale_fill_manual(values=c1)+
+  theme(axis.title = element_text(size = 14,family = "Arial"),
+        axis.title.x=element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.text=element_text(size=10),
+        legend.title= element_blank(),
+        legend.position = "top",
+        axis.text = element_text(size = 10, family = "Arial"))+
+  geom_hline(yintercept=7, size= 0.5, linetype="dashed", color="black")
+p2
+```
+# q7
+```{r  fig.width=5, fig.height=3}
+p3 <- ggplot(w8_meta, aes(x = Run, y = mapping, fill = Cell_type)) +
+  geom_col(width = 0.8)+
+  facet_wrap(~Method, scales = "free")+
+  labs(x = "Sample", y = "Quality > 7 (%)")+
+  theme_bw() + 
+  theme_classic() +
+ # scale_fill_manual(values=c1)+
+  theme(axis.title = element_text(size = 14,family = "Arial"),
+        axis.title.x=element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.text=element_text(size=10),
+        legend.title= element_blank(),
+        legend.position = "top",
+        axis.text = element_text(size = 10, family = "Arial"))
+p3
+```
+
+
+```{r fig.width=8, fig.height=2.5}
+cairo_pdf("./length_qual.pdf", 8,3)
+(p1|p2)+ plot_annotation(tag_levels = c( 'A', '1'))
+dev.off()
+
+```
+
+

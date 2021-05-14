@@ -1,0 +1,320 @@
+---
+title: "Untitled"
+author: "xumengying"
+date: "2021/2/3"
+output: html_document
+---
+
+```{r}
+library(ggbio)
+library(GenomicFeatures)
+```
+
+# V1 plot all
+## function
+```{r}
+## make transcript list
+tx_list_fun <- function(files) {
+  tx_list <- lapply(files, function(file) {
+    gtfFile <- file
+    txdb <- makeTxDbFromGFF(
+      file       = gtfFile,
+      format     = "gtf",
+      dataSource = "ensembl",
+      organism   = "Homo sapiens"
+    )
+    
+    introns <- intronsByTranscript(txdb)
+    tx_in <- exonsBy(txdb, "tx")
+    
+    tx_in <- lapply(tx_in, function(x) {
+      x$Bam <- gsub(".bam.gtf|Gata2_|Myc_" , "", basename(file))
+      x$method <- unlist(strsplit(file, "/"))[11]
+      x
+    })
+    return(tx_in)
+  })
+  
+  tx_list <- unlist(tx_list)
+}
+  
+## make gtf txdb
+gtf_txdb_func <- function(gtfFile) {
+  makeTxDbFromGFF(
+    file       = gtfFile,
+    format     = "gtf",
+    dataSource = "ensembl",
+    organism   = "Homo sapiens"
+  )
+}
+
+## plot igv function
+plot_igv_fun <- function(x) {
+  autoplot(
+    x,
+    gap.geom = "chevron",
+    label.color = "black",
+    aes(fill = Bam),
+    #facets = method ~ .,
+    show.coverage = T,
+    indName = "grl_name",
+    group.selfish = T
+  )
+}
+
+## make sashimi input data Granges 
+#c(paste0("tx_list[[", seq(1:length(tx_list)), "]]", collapse = ", "))
+make_cov_list_data <- function(x ,minLength, maxLength) {
+  cov_list <- unlist(x)
+  names(cov_list) <- 1:length(cov_list)
+  cov_list <- cov_list[end(cov_list) < maxLength]
+  cov_list <- cov_list[start(cov_list) > minLength]
+  return(cov_list)
+}
+
+## make sashimi introns position
+make_intron_posi_data <- function(x) {
+  plot.data <- as.data.frame(x, stringsAsFactors = F)
+  plot.data <- plot.data[order(plot.data$exon_name),]
+
+  tran_id <- unique(gsub("\\.[0-9]*$", "", plot.data$exon_name))
+  intron.data <- lapply(tran_id, function(x) {
+    tmp1 <-
+      plot.data[gsub("\\.[0-9]*$", "", plot.data$exon_name) == x,]
+    tmp2 <- tmp1[-1,]
+    tmp2$inr_start <- tmp1$end[-nrow(tmp1)]
+    tmp2$inr_end <- tmp1$start[-1]
+    return(tmp2)
+  })
+  
+  intron.data <- do.call("rbind", intron.data)
+  intron.data$colour <-
+    ifelse(intron.data$Bam == "LT_HSC", "#F8766D", ifelse(intron.data$Bam == "ST_HSC","#01BA38", "#619CFD"))
+  return(intron.data)
+}
+
+## plot sashimi coverage data
+plot_sashimi_p1 <- function(trans) {
+  autoplot(
+    trans ,
+    label.color = "gray80",
+    show.coverage = T,
+    stat = "coverage",
+    geom = "area",
+    aes(fill = Bam),
+    facets = Bam ~ .
+  )
+}
+
+## plot sashimi coverage
+plot_sashimi <- function(p1,intron) {
+  p1@ggplot +
+    theme_clear() +
+    theme_classic2() +
+    facet_wrap(Bam ~ .,scales = "free",ncol =1,strip.position = "right") + 
+   # scale_fill_manual(values = c("#F8766D", "#01BA38")) +
+    geom_curve(
+      aes(
+        x = intron$inr_start ,
+        y = 0,
+        xend = intron$inr_end,
+        yend = 0
+      ),
+      data = intron,
+      curvature = -0.2,
+      size = 0.1,
+      colour = intron$colour
+    ) +
+    theme(
+      legend.position = "none",
+      axis.line.x        = element_blank(),
+      axis.ticks.x       = element_blank(),
+      axis.text.x       = element_blank()
+    )
+}
+
+## plot sashimi gtf file
+plot_gtf <- function(txdb, sj, p1) {
+  wh <- sj
+  p2 <- autoplot(txdb, which = as(wh, "GRanges"))
+  p2@ggplot +
+    theme_clear() +
+    scale_fill_manual(values = c("gray40")) +
+    theme_classic() +
+    theme(legend.position = "none") +
+    xlim(min(start(p1@data)):max(end(p1@data))) +
+    theme(panel.border       = element_blank()) +
+    labs(y = "ENSEMBL")
+}
+```
+
+## 1.1 gata2
+### load file
+```{r}
+file1 <-
+  list.files(
+    "/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/xumengying/analysis/01.minimap2/Nanopore/seqkit/HSC_SD",
+    pattern = "Gata2",
+    full.names = T
+  )
+
+file2 <-
+  list.files(
+    "/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/xumengying/analysis/01.minimap2/Pacbio/HSC_SD",
+    pattern = "Gata2",
+    full.names = T
+  )
+
+gtfFile <- file.path("/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/xumengying/analysis/01.minimap2/gtf/Gata2.gtf")
+
+
+files <- c(file1, file2)
+files
+```
+
+
+### make GRangesList
+```{r}
+tx_list <- tx_list_fun(files)
+gtf_txdb <- gtf_txdb_func(gtfFile)
+
+tx_list_l <- GRangesList(tx_list)
+names(tx_list_l) <- as.character(seq(1:length(names(tx_list_l))))
+```
+
+
+### plot igv
+```{r fig.width=30, fig.height=100}
+p <- plot_igv_fun(tx_list_l)
+p@ggplot + theme_clear() + theme_classic2() #+ scale_fill_manual(values=c( "gray40", "#F8766D", "#01BA38" ))
+```
+
+### plot sashimi
+####make plot data
+```{r fig.width=13, fig.height=4}
+cov_list <- make_cov_list_data(tx_list_l,88193171,88207532)
+intron.data <- make_intron_posi_data(cov_list)
+
+sj1 <- intron.data[intron.data$exon_rank == 2,]
+sj1[sj1$inr_start > 88198872 & sj1$inr_end < 88199526,]
+```
+
+### plot
+```{r fig.width=10, fig.height=4}
+p1 <- plot_sashimi_p1(cov_list)
+p2 <- plot_sashimi(p1,intron.data)
+p2
+```
+
+
+```{r fig.width=10, fig.height=4}
+wh <- "6:88193671-88207032"
+p3 <- plot_gtf(gtf_txdb, wh, p1)
+```
+
+### plot igv
+```{r fig.width=10, fig.height=5}
+tx_list_s <- tx_list_l[names(tx_list_l) %in% c("2","24","585","40","43","594")]
+p <- plot_igv_fun(tx_list_s)
+p4 <- p@ggplot + theme_clear() + theme_classic2() + xlim(min(start(p1@data)):max(end(p1@data))) #+ scale_fill_manual(values=c( "gray40", "#F8766D", "#01BA38" ))
+```
+
+
+```{r fig.width=10, fig.height=6}
+library(patchwork)
+p3/p2/p4 + plot_layout(ncol = 1)
+```
+
+
+
+
+## 1.2 myc
+```{r}
+file1 <-
+  list.files(
+    "/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/xumengying/analysis/01.minimap2/Nanopore/seqkit/HSC_SD",
+    pattern = "Myc",
+    full.names = T
+  )
+
+file2 <-
+  list.files(
+    "/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/xumengying/analysis/01.minimap2/Pacbio/HSC_SD",
+    pattern = "Myc",
+    full.names = T
+  )
+
+gtfFile <- file.path("/mnt/raid64/ref_genomes/MusMus/release93/Mus_musculus.GRCm38.93.gtf")
+
+
+files <- c(file1, file2)
+files
+```
+
+### make GRangesList
+```{r}
+tx_list <- tx_list_fun(files)
+gtf_txdb <- gtf_txdb_func(gtfFile)
+
+tx_list_l <- GRangesList(tx_list)
+names(tx_list_l) <- as.character(seq(1:length(names(tx_list_l))))
+```
+
+
+
+### plot igv
+```{r fig.width=30, fig.height=300}
+p <- plot_igv_fun(tx_list_l)
+p@ggplot + theme_clear() + theme_classic2() #+ scale_fill_manual(values=c( "gray40", "#F8766D", "#01BA38" ))
+```
+
+
+### plot sashimi
+####make plot data
+```{r fig.width=13, fig.height=4}
+cov_list <- make_cov_list_data(tx_list_l,61984891,61990874)
+intron.data <- make_intron_posi_data(cov_list)
+```
+
+
+```{r}
+sj2 <- cov_list[cov_list$exon_rank == 1]
+long <- sj2[start(sj2) < 61985394  & end(sj2) < 61985961]
+short <- sj2[start(sj2) < 61985562 & start(sj2) >  61985384 & end(sj2) < 61985961]
+```
+
+### plot
+```{r fig.width=10, fig.height=2}
+p1 <- plot_sashimi_p1(cov_list)
+pp2 <- plot_sashimi(p1,intron.data)
+pp2
+```
+
+
+```{r fig.width=10, fig.height=4}
+wh <- "15:61984891-61990874"
+pp3 <- plot_gtf(gtf_txdb, wh, p1)
+```
+
+
+### plot igv
+```{r fig.width=10, fig.height=5}
+tx_list_s <- tx_list_l[names(tx_list_l) %in% c("2856","2782","2422","2576")]
+pp <- plot_igv_fun(tx_list_s)
+pp4 <- pp@ggplot + theme_clear() + theme_classic2() + xlim(min(start(p1@data)):max(end(p1@data))) #+ scale_fill_manual(values=c( "gray40", "#F8766D", "#01BA38" ))
+pp4
+```
+
+```{r fig.width=10, fig.height=6}
+pdf("/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/xumengying/analysis/05.Isoform/gata2.pdf",10,6)
+pp3/pp2/pp4 + plot_layout(ncol = 1)
+dev.off()
+```
+
+
+
+```{r fig.width=10, fig.height=5}
+pdf("/mnt/raid62/Personal_data/zhangdan/Mouse_HSC/personal/xumengying/analysis/05.Isoform/gata2_myc.pdf",10,5)
+(pp3/pp2/pp4)|(p3/p2/p4) + plot_layout(ncol = 1, heights = 1:2:1)
+dev.off()
+```
