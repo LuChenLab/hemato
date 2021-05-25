@@ -4,4 +4,3 @@ Hematopoietic stem cells (HSCs) lie at the top of the differentiation hierarchy.
 
 **Figure 1.** Sample collection and workflow. 
 ![image](https://github.com/LuChenLab/hemato/blob/main/image/Fig1.pdf)
-
